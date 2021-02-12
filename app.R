@@ -37,8 +37,8 @@ ui <- fluidPage(
     ),
     mainPanel(
         tableOutput("head"),
-        plotOutput("heatmap", height = "600px"),
-        actionButton("browser", "browser")
+        plotOutput("heatmap", height = "600px")#,
+        #actionButton("browser", "browser")
     )
   )
 )
