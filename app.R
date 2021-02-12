@@ -8,44 +8,32 @@
 #
 
 library(shiny)
+library(svglite) # required for saving svg file
 
 ui <- fluidPage(
-    tags$script("
-                var myWidth = 0;
-                $(document).on('shiny:connected', function(event) {
-                  myWidth = $(window).width();
-                  Shiny.onInputChange('shiny_width', myWidth);
-                });
-                $(window).resize(function(event) {
-                   myWidth = $(window).width();
-                   Shiny.onInputChange('shiny_width', myWidth);
-                });
-              "),
-    tags$script("
-                var myHeight = 0;
-                $(document).on('shiny:connected', function(event) {
-                  myHeight = $(window).height();
-                  Shiny.onInputChange('shiny_height', myHeight);
-                });
-                $(window).resize(function(event) {
-                   myHeight = $(window).height();
-                   Shiny.onInputChange('shiny_height', myHeight);
-                });
-                "),
+  
+  shinyjs::useShinyjs(),
   titlePanel("Heatmap"),
   sidebarLayout(
     sidebarPanel(
       fileInput("file", "Upload file"),
-      textInput("group_types", "group names", value = "WT, KO"),
-      br(),
       textOutput("lipid_column"),
       br(),
+      textInput("group_types", "group names", value = "WT, KO"),
+      br(),
       actionButton("plot_heatmap" , "Plot heatmap"),
-      numericInput("plot_height", "plot height", 600),
       br(),
       br(),
-      downloadButton("download_png", "png"),
-      downloadButton("download_pdf", "pdf")
+      br(),
+      downloadButton("download_png", "download png"),
+      downloadButton("download_svg", "download svg"),
+      br(),
+      br(),
+      br(),
+      splitLayout(
+        numericInput("plot_height", "plot height", 500),
+        numericInput("plot_width", "plot width", 500)
+      )
     ),
     mainPanel(
         tableOutput("head"),
@@ -58,66 +46,70 @@ ui <- fluidPage(
 
 server <- function(input, output) {
     
-    rv <- reactiveValues()
+  rv <- reactiveValues()
+  
+  shinyjs::disable("download_png")
+  shinyjs::disable("download_svg")
+  
+  groups <- reactive({
+    x <- stringr::str_split(input$group_types, pattern = ",", simplify = TRUE)
+    stringr::str_trim(x)  
+  })
+  
+  lipid_column <- reactive(colnames(raw_dataset())[1])
+  
+  raw_dataset <- reactive({
+      
+    req(input$file)
+    ext <- tools::file_ext(input$file$name)
+    switch(ext,
+           csv = vroom::vroom(input$file$datapath, delim = ","),
+           tsv = vroom::vroom(input$file$datapath, delim = "\t"),
+           validate("Invalid file; Please upload a .csv or .tsv file")
+    )
+  })
+  
+  heatmap_data <- reactive({
+    raw_dataset <- remove_0_variance(raw_dataset())
+    tibble::column_to_rownames(raw_dataset(), lipid_column())
+  })
+  
+  output$head <- renderTable({
+    head(raw_dataset(), n = 3)
+  })
+  
+  output$lipid_column <- renderText({
+    paste0("Column containing lipid names is assumed to be ", lipid_column())
+  })
     
-    groups <- reactive({
+  observeEvent(input$plot_heatmap, {
         
-        x <- stringr::str_split(input$group_types, pattern = ",", simplify = TRUE)
-        stringr::str_trim(x)  
-    })
-    
-    lipid_column <- reactive(colnames(raw_dataset())[1])
-    
-    raw_dataset <- reactive({
-        
-        req(input$file)
-        ext <- tools::file_ext(input$file$name)
-        switch(ext,
-               csv = vroom::vroom(input$file$datapath, delim = ","),
-               tsv = vroom::vroom(input$file$datapath, delim = "\t"),
-               validate("Invalid file; Please upload a .csv or .tsv file")
-        )
-    })
-    
-    heatmap_data <- reactive({
-        raw_dataset <- remove_0_variance(raw_dataset())
-        tibble::column_to_rownames(raw_dataset(), lipid_column())
-    })
-    
-    output$head <- renderTable({
-        head(raw_dataset(), n = 3)
-    })
-    
-    output$lipid_column <- renderText({
-        paste0("Column containing lipid names is assumed to be ", lipid_column())
-    })
-    
-    observeEvent(input$plot_heatmap, {
-        
-        df_groups <- sapply(colnames(heatmap_data()), get_group, groups = groups())
+    df_groups <- sapply(colnames(heatmap_data()), get_group, groups = groups())
 
-        # The lipid classes
-        df_lipids <- parse_lipid_classes(raw_dataset(), lipid_column())
+    # The lipid classes
+    df_lipids <- parse_lipid_classes(raw_dataset(), lipid_column())
 
-        # pheatmap requires a dataframe with sample names/lipid names as rownames
-        rv$annot_col <- tibble::column_to_rownames(tibble::enframe(df_groups), "name")
-        rv$annot_row <- tibble::column_to_rownames(df_lipids, "names")
+    # pheatmap requires a dataframe with sample names/lipid names as rownames
+    rv$annot_col <- tibble::column_to_rownames(tibble::enframe(df_groups), "name")
+    rv$annot_row <- tibble::column_to_rownames(df_lipids, "names")
 
-        #===============================================================================
-        # Lipid classes need further sorting to create custom row annotations where only
-        # the class name is displayed rather than each individual lipid.
+    #===============================================================================
+    # Lipid classes need further sorting to create custom row annotations where only
+    # the class name is displayed rather than each individual lipid.
 
-        lipid_summary <- get_lipid_summary(df_lipids)
-        rv$lipid_labels <- create_lipid_class_labels(lipid_summary, nrow(df_lipids))
+    lipid_summary <- get_lipid_summary(df_lipids)
+    rv$lipid_labels <- create_lipid_class_labels(lipid_summary, nrow(df_lipids))
 
-        lipid_colours <- create_lipid_colours(class_names = dplyr::pull(lipid_summary, class))
-        group_colours <- stats::setNames(c("blue", "green"), groups())
+    lipid_colours <- create_lipid_colours(class_names = dplyr::pull(lipid_summary, class))
+    group_colours <- stats::setNames(c("blue", "green"), groups())
 
-        rv$colours <- list(
-            value = group_colours,
-            class = lipid_colours
-        )
-    })
+    rv$colours <- list(
+        value = group_colours,
+        class = lipid_colours
+    )
+    shinyjs::enable("download_png")
+    shinyjs::enable("download_svg")
+})
     
     heatmap_obj <- eventReactive(input$plot_heatmap, {
         pheatmap::pheatmap(
@@ -136,10 +128,15 @@ server <- function(input, output) {
    
     output$heatmap <- renderPlot({
         req(input$plot_height)
+        req(!is.na(input$plot_height))
+        req(input$plot_width)
+        req(!is.na(input$plot_width))
+        
         plot(heatmap_obj()$gtable)
-    }, 
-    height = function(x) input$plot_height)
-    
+      }, 
+      height = function(x) input$plot_height, 
+      width = function(x) input$plot_width
+    )
     
     output$download_png <- downloadHandler(
         filename = function() {
@@ -150,13 +147,29 @@ server <- function(input, output) {
                 file, 
                 heatmap_obj(), 
                 device = "png",
-                width = input$shiny_width/4, ## 1pixel ~ 0.26mm at 96 dpi. it's ~0.35 at 72dpi
-                height = input$shiny_height/4, 
+                width = input$plot_width*0.35,
+                height = input$plot_height*0.35, 
                 units = "mm"
             )
         }
     )
     
+    output$download_svg <- downloadHandler(
+
+      filename = function() {
+        paste0("heatmap.svg")
+      },
+      content = function(file) {
+        ggplot2::ggsave(
+          file,
+          heatmap_obj(),
+          device = "svg",
+          width = input$plot_width*0.35,
+          height = input$plot_height*0.35,
+          units = "mm"
+        )
+      }
+    )
 
     observeEvent(input$browser, browser())
 }
