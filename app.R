@@ -8,7 +8,7 @@
 #
 
 library(shiny)
-library(svglite) # required for saving svg file
+#library(svglite) # required for saving svg file
 
 ui <- fluidPage(
   
@@ -26,7 +26,7 @@ ui <- fluidPage(
       br(),
       br(),
       downloadButton("download_png", "download png"),
-      downloadButton("download_svg", "download svg"),
+      downloadButton("download_pdf", "download pdf"),
       br(),
       br(),
       br(),
@@ -49,7 +49,7 @@ server <- function(input, output) {
   rv <- reactiveValues()
   
   shinyjs::disable("download_png")
-  shinyjs::disable("download_svg")
+  shinyjs::disable("download_pdf")
   
   groups <- reactive({
     x <- stringr::str_split(input$group_types, pattern = ",", simplify = TRUE)
@@ -108,7 +108,7 @@ server <- function(input, output) {
         class = lipid_colours
     )
     shinyjs::enable("download_png")
-    shinyjs::enable("download_svg")
+    shinyjs::enable("download_pdf")
 })
     
     heatmap_obj <- eventReactive(input$plot_heatmap, {
@@ -154,16 +154,16 @@ server <- function(input, output) {
         }
     )
     
-    output$download_svg <- downloadHandler(
+    output$download_pdf <- downloadHandler(
 
       filename = function() {
-        paste0("heatmap.svg")
+        paste0("heatmap.pdf")
       },
       content = function(file) {
         ggplot2::ggsave(
           file,
           heatmap_obj(),
-          device = "svg",
+          device = "pdf",
           width = input$plot_width*0.35,
           height = input$plot_height*0.35,
           units = "mm"
